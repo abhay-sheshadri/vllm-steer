@@ -142,6 +142,7 @@ class LogitsProcessorWithLoRA(BaseLayerWithLoRA):
         lora_a: torch.Tensor,
         lora_b: torch.Tensor,
         embeddings_tensor: torch.Tensor | None,
+        bias: torch.Tensor | None = None,
     ):
         self.reset_lora(index)
         self.lora_a_stacked[index, 0, : lora_a.shape[0], : lora_a.shape[1]].copy_(

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from typing import Optional, Union, cast
 
 import torch
 import torch.nn as nn
@@ -37,6 +38,9 @@ class RowParallelLinearWithLoRA(BaseLinearLayerWithLoRA):
 
     def slice_lora_b(self, lora_b: torch.Tensor) -> torch.Tensor:
         return lora_b
+
+    def slice_bias(self, bias: torch.Tensor) -> torch.Tensor:
+        return bias
 
     def forward(
         self, input_: torch.Tensor
@@ -119,7 +123,19 @@ class RowParallelLinearWithShardedLoRA(RowParallelLinearWithLoRA):
         lora_b = lora_b[start_idx:end_idx, :]
         return lora_b
 
-    def apply(self, x: torch.Tensor, bias: torch.Tensor | None = None) -> torch.Tensor:
+    def slice_bias(self, bias: torch.Tensor) -> torch.Tensor:
+        if bias is None:
+            return bias
+        self.lora_bias_stacked = cast(tuple[torch.Tensor, ...], self.lora_bias_stacked)
+        shard_size = self.lora_bias_stacked[0].shape[2]
+        start_idx = self.tp_rank * shard_size
+        end_idx = (self.tp_rank + 1) * shard_size
+        bias = bias[start_idx:end_idx]
+        return bias
+
+    def apply(
+        self, x: torch.Tensor, bias: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         output = self.base_layer.quant_method.apply(self.base_layer, x)
 
         x = x.view(-1, x.shape[-1])
@@ -151,6 +167,7 @@ class RowParallelLinearWithShardedLoRA(RowParallelLinearWithLoRA):
             output,
             buffer,
             self.lora_b_stacked,
+            self.lora_bias_stacked,
             self.output_slices,
             offset_start=offset_start,
             add_input=True,

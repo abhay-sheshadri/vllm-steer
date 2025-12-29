@@ -60,13 +60,14 @@ class PunicaWrapperABC(ABC):
         y: torch.Tensor,
         x: tuple[torch.Tensor, ...] | torch.Tensor,
         lora_b_stacked: tuple[torch.Tensor, ...],
+        lora_bias_stacked: Optional[tuple[torch.Tensor, ...]],
         output_slices: tuple[int, ...],
         offset_start: int = 0,
         add_inputs=True,
         **kwargs,
     ) -> torch.Tensor | None:
         """
-        Performs GEMM for multiple slices of lora_b.
+        Performs GEMM and bias addition for multiple slices of lora_b.
         """
         raise NotImplementedError
 
@@ -92,6 +93,7 @@ class PunicaWrapperABC(ABC):
         x: torch.Tensor,
         lora_a_stacked: tuple[torch.Tensor, ...],
         lora_b_stacked: tuple[torch.Tensor, ...],
+        lora_bias_stacked: Optional[tuple[torch.Tensor, ...]],
         scale: float,
         output_slices: tuple[int, ...],
         *,
@@ -220,6 +222,38 @@ class PunicaWrapperBase(PunicaWrapperABC):
         self.token_nums = token_nums
         self.no_lora = no_lora
 
+    def _apply_bias(
+        self,
+        indices: torch.Tensor,
+        output: torch.Tensor,
+        output_slices: tuple[int, ...],
+        lora_bias_stacked: tuple[Optional[torch.Tensor], ...],
+    ):
+        """Applies bias to output
+
+        Input shapes:
+            lora_bias_stacked:      3 element tuple of (num_loras, output_dim)
+            indices:           (batch_size)
+            output:            (batch_size, q_slice_size + 2*kv_slice_size)
+            output_slices:     n-1 element tuple of (slice_size...),
+                            where n is number of slices
+        """
+        org_output = output
+        output = output.view(-1, output.shape[-1])
+        indices = indices.view(-1)
+
+        offset_left = 0
+        for slice_idx, slice in enumerate(output_slices):
+            bias = lora_bias_stacked[slice_idx]
+            if bias is not None:
+                bias = bias.view(-1, bias.shape[-1])
+                bias = bias[indices]
+                bias[indices == -1] = 0
+                output[:, offset_left : offset_left + slice] += bias
+            offset_left += slice
+
+        return output.view_as(org_output)
+
     @property
     def prefill_metadata(
         self,
@@ -331,25 +365,29 @@ class PunicaWrapperBase(PunicaWrapperABC):
         y: torch.Tensor,
         x: tuple[torch.Tensor, ...] | torch.Tensor,
         lora_b_stacked: tuple[torch.Tensor, ...],
+        lora_bias_stacked: Optional[tuple[torch.Tensor, ...]],
         output_slices: tuple[int, ...],
         offset_start: int = 0,
         add_inputs=True,
         **kwargs,
     ) -> torch.Tensor | None:
         """
-        Performs GEMM for multiple slices of lora_b.
+        Performs GEMM and bias addition for multiple slices of lora_b.
 
         Semantics:
             offset = offset_start
             for i in range(len(lora_b_stacked)):
                 slice = output_slices[i]
-                y[:, offset:offset+slice] += x[i] @ lora_b_stacked[i]
+                y[:, offset:offset+slice] += x[i] @ lora_b_stacked[i] +
+                    lora_bias_stacked[i]
                 offset += slice
 
         Args:
             y (torch.Tensor): Output tensor.
             x (Union[tuple[torch.Tensor, ...], torch.Tensor]): Input tensors
             lora_b_stacked (tuple[torch.Tensor, ...]): lora_b's weight
+            lora_bias_stacked (Optional[tuple[torch.Tensor, ...]]):
+                bias's weight
             output_slices (tuple[int, ...]): Every slice's size
             offset_start (int): The starting position of y, defaults to 0
             add_inputs (bool):  Defaults to True.
@@ -389,6 +427,7 @@ class PunicaWrapperBase(PunicaWrapperABC):
         x: torch.Tensor,
         lora_a_stacked: tuple[torch.Tensor, ...],
         lora_b_stacked: tuple[torch.Tensor, ...],
+        lora_bias_stacked: Optional[tuple[torch.Tensor, ...]],
         scale: float,
         output_slices: tuple[int, ...],
         *,
@@ -405,13 +444,14 @@ class PunicaWrapperBase(PunicaWrapperABC):
                     @ lora_a_stacked[indices[i], layer_idx, :, :]
                     @ lora_b_stacked[indices[i], layer_idx, :, :]
                     * scale
-                    ).squeeze(0)
+                    ).squeeze(0)+lora_bias_stacked[i]
 
         Args:
             y (torch.Tensor): Output tensor. Will be changed in-place.
             x (torch.Tensor): Input tensor
             lora_a_stacked (tuple[torch.Tensor, ...]): lora_a's weight.
             lora_b_stacked (tuple[torch.Tensor, ...]): lora_b's weight.
+            lora_bias_stacked (Optional[tuple[torch.Tensor, ...]]): lora's bias.
             scale (float): Scaling factor.
             output_slices (tuple[int, ...]): Every slice's size.
             buffer (Optional[tuple[torch.Tensor, ...]]): Defaults to None.

@@ -90,6 +90,7 @@ class VocabParallelEmbeddingWithLoRA(BaseLayerWithLoRA):
         lora_a: torch.Tensor,
         lora_b: torch.Tensor,
         embeddings_tensor: torch.Tensor | None,
+        bias: torch.Tensor | None = None,
     ):
         self.reset_lora(index)
         # NOTE self.lora_a_stacked is row-major, and lora_a is col-major,
