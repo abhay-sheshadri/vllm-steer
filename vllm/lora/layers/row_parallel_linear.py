@@ -42,6 +42,32 @@ class RowParallelLinearWithLoRA(BaseLinearLayerWithLoRA):
     def slice_bias(self, bias: torch.Tensor) -> torch.Tensor:
         return bias
 
+    def apply(self, x: torch.Tensor, bias: torch.Tensor | None = None) -> torch.Tensor:
+        """Override base apply to only add LoRA bias on rank 0."""
+        output = self.base_layer.quant_method.apply(self.base_layer, x, bias)
+
+        # In transformers backend, x and output have extra batch dimension
+        if x.ndim == 3 and output.ndim == 3:
+            output = output.flatten(0, 1)
+            x = x.flatten(0, 1)
+
+        # Only apply LoRA bias on rank 0 to avoid adding it multiple times
+        # after all_reduce (mirrors base layer bias behavior)
+        lora_bias = None if self.tp_rank > 0 else self.lora_bias_stacked
+        lora_output: torch.Tensor | None = self.punica_wrapper.add_lora_linear(
+            output,
+            x,
+            self.lora_a_stacked,
+            self.lora_b_stacked,
+            lora_bias,
+            1.0,
+            self.output_slices,
+        )
+        if not current_platform.can_update_inplace():
+            output = lora_output
+
+        return output
+
     def forward(
         self, input_: torch.Tensor
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor | None]:
@@ -163,11 +189,14 @@ class RowParallelLinearWithShardedLoRA(RowParallelLinearWithLoRA):
         # NOTE offset are based on the rank.
         shard_size = self.lora_b_stacked[0].shape[2]
         offset_start = self.tp_rank * shard_size
+        # Only apply LoRA bias on rank 0 to avoid adding it multiple times
+        # after all_reduce (mirrors base layer bias behavior)
+        lora_bias = None if self.tp_rank > 0 else self.lora_bias_stacked
         lora_output: torch.Tensor | None = self.punica_wrapper.add_expand(
             output,
             buffer,
             self.lora_b_stacked,
-            self.lora_bias_stacked,
+            lora_bias,
             self.output_slices,
             offset_start=offset_start,
             add_input=True,

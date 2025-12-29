@@ -199,7 +199,7 @@ class PunicaWrapperCPU(PunicaWrapperBase):
         y: torch.Tensor,
         x: tuple[torch.Tensor, ...] | torch.Tensor,
         lora_b_stacked: tuple[torch.Tensor, ...],
-        lora_bias_stacked: Optional[tuple[torch.Tensor, ...]],
+        lora_bias_stacked: tuple[torch.Tensor, ...] | None,
         output_slices: tuple[int, ...],
         offset_start: int = 0,
         add_inputs=True,
@@ -219,7 +219,7 @@ class PunicaWrapperCPU(PunicaWrapperBase):
             y (torch.Tensor): Output tensor.
             x (Union[tuple[torch.Tensor, ...], torch.Tensor]): Input tensors
             lora_b_stacked (tuple[torch.Tensor, ...]): lora_b's weight
-            lora_bias_stacked (Optional[tuple[torch.Tensor, ...]]):
+            lora_bias_stacked (tuple[torch.Tensor, ...] | None):
                 bias's weight
             output_slices (tuple[int, ...]): Every slice's size
             add_inputs (bool):  Defaults to True.
@@ -276,7 +276,7 @@ class PunicaWrapperCPU(PunicaWrapperBase):
         x: torch.Tensor,
         lora_a_stacked: tuple[torch.Tensor, ...],
         lora_b_stacked: tuple[torch.Tensor, ...],
-        lora_bias_stacked: Optional[tuple[torch.Tensor, ...]],
+        lora_bias_stacked: tuple[torch.Tensor, ...] | None,
         scale: float,
         output_slices: tuple[int, ...],
         *,
@@ -300,10 +300,10 @@ class PunicaWrapperCPU(PunicaWrapperBase):
             x (torch.Tensor): Input tensor
             lora_a_stacked (tuple[torch.Tensor, ...]): lora_a's weight.
             lora_b_stacked (tuple[torch.Tensor, ...]): lora_b's weight.
-            lora_bias_stacked (Optional[tuple[torch.Tensor, ...]]): lora's bias.
+            lora_bias_stacked (tuple[torch.Tensor, ...] | None): lora's bias.
             scale (float): Scaling factor.
             output_slices (tuple[int, ...]): Every slice's size.
-            buffer (Optional[tuple[torch.Tensor, ...]]): Defaults to None.
+            buffer (tuple[torch.Tensor, ...] | None): Defaults to None.
         """
 
         assert len(lora_a_stacked) == len(lora_b_stacked) == len(output_slices)
